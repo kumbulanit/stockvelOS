@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.js
+*.d.ts
+*.js.map
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+
+# Flutter/Dart
+.dart_tool/
+.packages
+.pub/
+build/
+*.g.dart
+*.freezed.dart
+
+# Mobile builds
+*.apk
+*.aab
+*.ipa
+*.app
+
+# Temporary
+tmp/
+temp/

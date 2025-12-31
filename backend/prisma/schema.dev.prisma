@@ -1,0 +1,375 @@
+// Prisma Schema for Stockvel OS - SQLite Development Version
+// Production uses PostgreSQL with DECIMAL(19,4) for money
+// SQLite uses REAL for simplicity in dev (backend validates decimal precision)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ============================================
+// IDENTITY & AUTH
+// ============================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  phone         String    @unique
+  passwordHash  String    @map("password_hash")
+  firstName     String    @map("first_name")
+  lastName      String    @map("last_name")
+  idNumber      String?   @map("id_number")
+  status        String    @default("ACTIVE")
+  emailVerified Boolean   @default(false) @map("email_verified")
+  phoneVerified Boolean   @default(false) @map("phone_verified")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  memberships    Membership[]
+  sessions       Session[]
+  auditLogs      AuditLog[]     @relation("AuditActor")
+  contributions  Contribution[]
+  payoutRequests PayoutRequest[]
+  approvals      Approval[]
+
+  @@map("users")
+}
+
+model Session {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  token        String    @unique
+  refreshToken String    @unique @map("refresh_token")
+  deviceInfo   String?   @map("device_info")
+  ipAddress    String?   @map("ip_address")
+  expiresAt    DateTime  @map("expires_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  revokedAt    DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ============================================
+// STOKVEL & MEMBERSHIP
+// ============================================
+
+model Stokvel {
+  id                    String    @id @default(uuid())
+  name                  String
+  type                  String    // SAVINGS, GROCERY, BURIAL, ROSCA
+  description           String?
+  currency              String    @default("ZAR")
+  contributionAmount    Float?    @map("contribution_amount")
+  contributionFrequency String?   @map("contribution_frequency")
+  rules                 String?   // JSON string
+  status                String    @default("ACTIVE")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  deletedAt             DateTime? @map("deleted_at")
+
+  memberships    Membership[]
+  contributions  Contribution[]
+  ledgerEntries  LedgerEntry[]
+  payoutRequests PayoutRequest[]
+  groceryItems   GroceryItem[]
+  burialClaims   BurialClaim[]
+  roscaRotations RoscaRotation[]
+
+  @@index([type])
+  @@index([status])
+  @@map("stokvels")
+}
+
+model Membership {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  stokvelId String    @map("stokvel_id")
+  role      String    @default("MEMBER") // MEMBER, TREASURER, SECRETARY, CHAIRMAN
+  status    String    @default("ACTIVE") // PENDING, ACTIVE, SUSPENDED, LEFT
+  joinedAt  DateTime  @default(now()) @map("joined_at")
+  leftAt    DateTime? @map("left_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user    User    @relation(fields: [userId], references: [id])
+  stokvel Stokvel @relation(fields: [stokvelId], references: [id])
+
+  @@unique([userId, stokvelId])
+  @@index([userId])
+  @@index([stokvelId])
+  @@map("memberships")
+}
+
+// ============================================
+// CONTRIBUTIONS & LEDGER
+// ============================================
+
+model Contribution {
+  id             String    @id @default(uuid())
+  stokvelId      String    @map("stokvel_id")
+  memberId       String    @map("member_id")
+  amount         Float     // Use string in API, validate precision
+  currency       String    @default("ZAR")
+  periodStart    DateTime  @map("period_start")
+  periodEnd      DateTime  @map("period_end")
+  status         String    @default("PENDING") // PENDING, APPROVED, REJECTED, CANCELLED
+  popDocumentId  String?   @map("pop_document_id")
+  idempotencyKey String?   @unique @map("idempotency_key")
+  notes          String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  stokvel       Stokvel       @relation(fields: [stokvelId], references: [id])
+  member        User          @relation(fields: [memberId], references: [id])
+  popDocument   Document?     @relation(fields: [popDocumentId], references: [id])
+  ledgerEntries LedgerEntry[]
+  approvals     Approval[]
+
+  @@index([stokvelId])
+  @@index([memberId])
+  @@index([status])
+  @@map("contributions")
+}
+
+model LedgerEntry {
+  id            String   @id @default(uuid())
+  stokvelId     String   @map("stokvel_id")
+  entryType     String   @map("entry_type") // CONTRIBUTION_CREDIT, PAYOUT_DEBIT, etc.
+  amount        Float
+  currency      String   @default("ZAR")
+  balanceAfter  Float    @map("balance_after")
+  referenceType String?  @map("reference_type")
+  referenceId   String?  @map("reference_id")
+  description   String?
+  metadata      String?  // JSON string
+  createdAt     DateTime @default(now()) @map("created_at")
+  // NO deletedAt - ledger entries are immutable
+
+  stokvel      Stokvel       @relation(fields: [stokvelId], references: [id])
+  contribution Contribution? @relation(fields: [referenceId], references: [id])
+
+  @@index([stokvelId])
+  @@index([entryType])
+  @@index([createdAt])
+  @@map("ledger_entries")
+}
+
+// ============================================
+// PAYOUTS & APPROVALS
+// ============================================
+
+model PayoutRequest {
+  id             String    @id @default(uuid())
+  stokvelId      String    @map("stokvel_id")
+  requesterId    String    @map("requester_id")
+  amount         Float
+  currency       String    @default("ZAR")
+  reason         String?
+  status         String    @default("PENDING") // PENDING, APPROVED, REJECTED, PROCESSING, COMPLETED, FAILED
+  payoutType     String    @map("payout_type") // SAVINGS_WITHDRAWAL, BURIAL_CLAIM, ROSCA_ROTATION, EMERGENCY
+  bankDetails    String?   @map("bank_details") // Encrypted JSON
+  idempotencyKey String?   @unique @map("idempotency_key")
+  processedAt    DateTime? @map("processed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  stokvel   Stokvel    @relation(fields: [stokvelId], references: [id])
+  requester User       @relation(fields: [requesterId], references: [id])
+  approvals Approval[]
+
+  @@index([stokvelId])
+  @@index([requesterId])
+  @@index([status])
+  @@map("payout_requests")
+}
+
+model Approval {
+  id             String   @id @default(uuid())
+  approvableType String   @map("approvable_type") // CONTRIBUTION, PAYOUT_REQUEST, BURIAL_CLAIM
+  approvableId   String   @map("approvable_id")
+  approverId     String   @map("approver_id")
+  decision       String   // APPROVED, REJECTED
+  comment        String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  approver      User           @relation(fields: [approverId], references: [id])
+  contribution  Contribution?  @relation(fields: [approvableId], references: [id])
+  payoutRequest PayoutRequest? @relation(fields: [approvableId], references: [id])
+  burialClaim   BurialClaim?   @relation(fields: [approvableId], references: [id])
+
+  @@unique([approvableType, approvableId, approverId])
+  @@index([approvableType, approvableId])
+  @@map("approvals")
+}
+
+// ============================================
+// BURIAL SOCIETY
+// ============================================
+
+model BurialClaim {
+  id             String    @id @default(uuid())
+  stokvelId      String    @map("stokvel_id")
+  claimantId     String    @map("claimant_id")
+  deceasedName   String    @map("deceased_name")
+  relationship   String
+  dateOfDeath    DateTime  @map("date_of_death")
+  amount         Float
+  currency       String    @default("ZAR")
+  status         String    @default("PENDING") // PENDING, UNDER_REVIEW, APPROVED, REJECTED, PAID
+  documentsJson  String?   @map("documents")
+  idempotencyKey String?   @unique @map("idempotency_key")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  stokvel   Stokvel    @relation(fields: [stokvelId], references: [id])
+  approvals Approval[]
+
+  @@index([stokvelId])
+  @@index([status])
+  @@map("burial_claims")
+}
+
+// ============================================
+// GROCERY STOKVEL
+// ============================================
+
+model GroceryItem {
+  id          String    @id @default(uuid())
+  stokvelId   String    @map("stokvel_id")
+  name        String
+  description String?
+  unit        String
+  unitPrice   Float     @map("unit_price")
+  currency    String    @default("ZAR")
+  stockQty    Float     @map("stock_qty")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  stokvel     Stokvel             @relation(fields: [stokvelId], references: [id])
+  allocations GroceryAllocation[]
+
+  @@index([stokvelId])
+  @@map("grocery_items")
+}
+
+model GroceryAllocation {
+  id            String    @id @default(uuid())
+  groceryItemId String    @map("grocery_item_id")
+  memberId      String    @map("member_id")
+  quantity      Float
+  collectedQty  Float     @default(0) @map("collected_qty")
+  collectedAt   DateTime? @map("collected_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  groceryItem GroceryItem @relation(fields: [groceryItemId], references: [id])
+
+  @@index([groceryItemId])
+  @@index([memberId])
+  @@map("grocery_allocations")
+}
+
+// ============================================
+// ROSCA (Rotating Savings)
+// ============================================
+
+model RoscaRotation {
+  id          String    @id @default(uuid())
+  stokvelId   String    @map("stokvel_id")
+  cycleNumber Int       @map("cycle_number")
+  slotNumber  Int       @map("slot_number")
+  recipientId String?   @map("recipient_id")
+  amount      Float
+  currency    String    @default("ZAR")
+  status      String    @default("SCHEDULED") // SCHEDULED, PENDING_DRAW, DRAWN, PAID, SKIPPED
+  scheduledAt DateTime  @map("scheduled_at")
+  executedAt  DateTime? @map("executed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  stokvel Stokvel @relation(fields: [stokvelId], references: [id])
+
+  @@unique([stokvelId, cycleNumber, slotNumber])
+  @@index([stokvelId])
+  @@index([status])
+  @@map("rosca_rotations")
+}
+
+// ============================================
+// DOCUMENTS & STORAGE
+// ============================================
+
+model Document {
+  id          String    @id @default(uuid())
+  uploaderId  String    @map("uploader_id")
+  type        String    // PROOF_OF_PAYMENT, DEATH_CERTIFICATE, ID_DOCUMENT, BANK_STATEMENT, OTHER
+  filename    String
+  mimeType    String    @map("mime_type")
+  sizeBytes   Int       @map("size_bytes")
+  storageKey  String    @map("storage_key")
+  metadata    String?   // JSON string
+  createdAt   DateTime  @default(now()) @map("created_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  contributions Contribution[]
+
+  @@index([uploaderId])
+  @@index([type])
+  @@map("documents")
+}
+
+// ============================================
+// AUDIT LOG
+// ============================================
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorId      String?  @map("actor_id")
+  actorType    String   @map("actor_type") // user, system, api_key
+  action       String
+  resourceType String   @map("resource_type")
+  resourceId   String?  @map("resource_id")
+  stokvelId    String?  @map("stokvel_id")
+  payload      String?  // JSON string
+  metadata     String?  // JSON string
+  outcome      String   // success, failure
+  errorCode    String?  @map("error_code")
+  createdAt    DateTime @default(now()) @map("created_at")
+  // NO deletedAt - audit logs are immutable
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([resourceType, resourceId])
+  @@index([stokvelId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================
+// IDEMPOTENCY STORE
+// ============================================
+
+model IdempotencyKey {
+  key       String   @id
+  response  String   // JSON string
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
