@@ -1,0 +1,19 @@
+version: '3.8'
+
+# Development overrides
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: stockvel-api-dev
+    environment:
+      NODE_ENV: development
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npm run start:dev
+    ports:
+      - "3000:3000"
+      - "9229:9229"  # Debug port

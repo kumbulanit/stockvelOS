@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-// Screens - to be implemented
+// Screens
 import 'features/auth/presentation/screens/login_screen.dart';
+import 'features/auth/presentation/screens/register_screen.dart';
 import 'features/auth/presentation/screens/biometric_screen.dart';
 import 'features/home/presentation/screens/home_screen.dart';
 import 'features/stokvels/presentation/screens/stokvel_list_screen.dart';
@@ -11,16 +12,40 @@ import 'features/stokvels/presentation/screens/stokvel_detail_screen.dart';
 import 'features/contributions/presentation/screens/submit_contribution_screen.dart';
 import 'features/ledger/presentation/screens/ledger_screen.dart';
 
+import 'core/providers/auth_provider.dart';
+
 final routerProvider = Provider<GoRouter>((ref) {
+  final authState = ref.watch(authNotifierProvider);
+
   return GoRouter(
     initialLocation: '/login',
     debugLogDiagnostics: true,
+    redirect: (context, state) {
+      final isAuth = authState.status == AuthStatus.authenticated;
+      final isAuthRoute = state.matchedLocation == '/login' || 
+                          state.matchedLocation == '/register';
+
+      if (!isAuth && !isAuthRoute) {
+        return '/login';
+      }
+
+      if (isAuth && isAuthRoute) {
+        return '/';
+      }
+
+      return null;
+    },
     routes: [
       // Auth routes
       GoRoute(
         path: '/login',
         name: 'login',
         builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/register',
+        name: 'register',
+        builder: (context, state) => const RegisterScreen(),
       ),
       GoRoute(
         path: '/biometric',
@@ -83,11 +108,22 @@ class MainShell extends StatelessWidget {
 
   const MainShell({super.key, required this.child});
 
+  int _calculateSelectedIndex(BuildContext context) {
+    final location = GoRouterState.of(context).matchedLocation;
+    if (location.startsWith('/stokvels')) return 1;
+    if (location == '/notifications') return 2;
+    if (location == '/profile') return 3;
+    return 0;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final selectedIndex = _calculateSelectedIndex(context);
+
     return Scaffold(
       body: child,
       bottomNavigationBar: NavigationBar(
+        selectedIndex: selectedIndex,
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.home_outlined),

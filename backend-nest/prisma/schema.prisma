@@ -1,0 +1,500 @@
+// Prisma Schema for Stockvel OS - PostgreSQL Production Version
+// Uses DECIMAL(19,4) for financial precision
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// IDENTITY & AUTH
+// ============================================
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique @db.VarChar(255)
+  phone         String    @unique @db.VarChar(20)
+  passwordHash  String    @map("password_hash") @db.VarChar(255)
+  firstName     String    @map("first_name") @db.VarChar(100)
+  lastName      String    @map("last_name") @db.VarChar(100)
+  idNumber      String?   @map("id_number") @db.VarChar(20)
+  status        UserStatus @default(ACTIVE)
+  emailVerified Boolean   @default(false) @map("email_verified")
+  phoneVerified Boolean   @default(false) @map("phone_verified")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz
+
+  sessions           Session[]
+  memberships        GroupMember[]
+  uploadedDocuments  Document[]
+  contributions      Contribution[]
+  contributionApprovals Contribution[] @relation("ApprovedContributions")
+  savingsPayoutsCreated SavingsPayout[]
+  savingsPayoutApprovals SavingsPayoutApproval[]
+  auditLogs          AuditLog[]
+  notifications      Notification[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([status])
+  @@map("users")
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  DELETED
+}
+
+model Session {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  token        String    @unique @db.VarChar(500)
+  refreshToken String    @unique @map("refresh_token") @db.VarChar(500)
+  deviceInfo   String?   @map("device_info")
+  ipAddress    String?   @map("ip_address") @db.VarChar(45)
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ============================================
+// GROUPS & MEMBERSHIP
+// ============================================
+
+model Group {
+  id                    String    @id @default(uuid()) @db.Uuid
+  name                  String    @db.VarChar(200)
+  type                  GroupType
+  description           String?   @db.Text
+  currency              String    @default("ZAR") @db.VarChar(3)
+  contributionAmount    Decimal?  @map("contribution_amount") @db.Decimal(19, 4)
+  contributionFrequency ContributionFrequency? @map("contribution_frequency")
+  rules                 Json?
+  status                GroupStatus @default(ACTIVE)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt             DateTime? @map("deleted_at") @db.Timestamptz
+
+  members        GroupMember[]
+  documents      Document[]
+  contributions  Contribution[]
+  ledgerEntries  LedgerEntry[]
+  savingsRules   SavingsRule?
+  savingsPayouts SavingsPayout[]
+  auditLogs      AuditLog[]
+  notifications  Notification[]
+
+  @@index([type])
+  @@index([status])
+  @@map("groups")
+}
+
+enum GroupType {
+  SAVINGS
+  GROCERY
+  BURIAL
+  ROSCA
+}
+
+enum GroupStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  DISSOLVED
+}
+
+enum ContributionFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  QUARTERLY
+  ANNUALLY
+}
+
+model GroupMember {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  groupId   String           @map("group_id") @db.Uuid
+  role      MemberRole       @default(MEMBER)
+  status    MembershipStatus @default(ACTIVE)
+  joinedAt  DateTime         @default(now()) @map("joined_at") @db.Timestamptz
+  leftAt    DateTime?        @map("left_at") @db.Timestamptz
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime?        @map("deleted_at") @db.Timestamptz
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
+  @@index([role])
+  @@map("group_members")
+}
+
+enum MemberRole {
+  MEMBER
+  TREASURER
+  SECRETARY
+  CHAIRPERSON
+}
+
+enum MembershipStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  LEFT
+}
+
+// ============================================
+// SAVINGS MODULE
+// ============================================
+
+model SavingsRule {
+  id              String       @id @default(uuid()) @db.Uuid
+  groupId         String       @unique @map("group_id") @db.Uuid
+  monthlyAmount   Decimal      @map("monthly_amount") @db.Decimal(19, 4)
+  dueDay          Int          @map("due_day")
+  gracePeriodDays Int          @default(7) @map("grace_period_days")
+  fineEnabled     Boolean      @default(false) @map("fine_enabled")
+  fineAmount      Decimal?     @map("fine_amount") @db.Decimal(19, 4)
+  fineType        FineType?    @map("fine_type")
+  payoutModel     PayoutModel  @default(YEAR_END) @map("payout_model")
+  payoutSchedule  Json?        @map("payout_schedule")
+  minApprovalCount Int         @default(2) @map("min_approval_count")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@map("savings_rules")
+}
+
+enum FineType {
+  FLAT
+  PERCENTAGE
+}
+
+enum PayoutModel {
+  YEAR_END
+  QUARTERLY
+  ON_DEMAND
+  CUSTOM
+}
+
+model SavingsPayout {
+  id               String            @id @default(uuid()) @db.Uuid
+  groupId          String            @map("group_id") @db.Uuid
+  amount           Decimal           @db.Decimal(19, 4)
+  currency         String            @default("ZAR") @db.VarChar(3)
+  payoutType       SavingsPayoutType @map("payout_type")
+  description      String?           @db.Text
+  status           PayoutStatus      @default(PENDING)
+  targetMembers    Json?             @map("target_members")
+  distributionType DistributionType  @default(EQUAL) @map("distribution_type")
+  createdById      String            @map("created_by") @db.Uuid
+  approvedAt       DateTime?         @map("approved_at") @db.Timestamptz
+  processedAt      DateTime?         @map("processed_at") @db.Timestamptz
+  idempotencyKey   String?           @unique @map("idempotency_key") @db.VarChar(100)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt        DateTime?         @map("deleted_at") @db.Timestamptz
+
+  group     Group                   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdBy User                    @relation(fields: [createdById], references: [id])
+  approvals SavingsPayoutApproval[]
+  ledgerEntry LedgerEntry?
+
+  @@index([groupId])
+  @@index([status])
+  @@map("savings_payouts")
+}
+
+enum SavingsPayoutType {
+  SCHEDULED
+  MANUAL
+  EMERGENCY
+  DISSOLUTION
+}
+
+enum PayoutStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum DistributionType {
+  EQUAL
+  PROPORTIONAL
+  CUSTOM
+}
+
+model SavingsPayoutApproval {
+  id         String                   @id @default(uuid()) @db.Uuid
+  payoutId   String                   @map("payout_id") @db.Uuid
+  approverId String                   @map("approver_id") @db.Uuid
+  decision   ApprovalDecision
+  reason     String?                  @db.Text
+  createdAt  DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+
+  payout   SavingsPayout @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+  approver User          @relation(fields: [approverId], references: [id])
+
+  @@unique([payoutId, approverId])
+  @@index([payoutId])
+  @@index([approverId])
+  @@map("savings_payout_approvals")
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+// ============================================
+// DOCUMENTS
+// ============================================
+
+model Document {
+  id               String       @id @default(uuid()) @db.Uuid
+  uploaderId       String       @map("uploader_id") @db.Uuid
+  groupId          String?      @map("group_id") @db.Uuid
+  type             DocumentType
+  filename         String       @db.VarChar(255)
+  originalFilename String       @map("original_filename") @db.VarChar(255)
+  mimeType         String       @map("mime_type") @db.VarChar(100)
+  sizeBytes        Int          @map("size_bytes")
+  storageKey       String       @map("storage_key") @db.VarChar(500)
+  storageBucket    String       @map("storage_bucket") @db.VarChar(100)
+  metadata         Json?
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  deletedAt        DateTime?    @map("deleted_at") @db.Timestamptz
+
+  uploader     User          @relation(fields: [uploaderId], references: [id])
+  group        Group?        @relation(fields: [groupId], references: [id])
+  contributions Contribution[]
+
+  @@index([uploaderId])
+  @@index([groupId])
+  @@index([type])
+  @@map("documents")
+}
+
+enum DocumentType {
+  PROOF_OF_PAYMENT
+  DEATH_CERTIFICATE
+  ID_DOCUMENT
+  BANK_STATEMENT
+  CONTRACT
+  OTHER
+}
+
+// ============================================
+// CONTRIBUTIONS & LEDGER
+// ============================================
+
+model Contribution {
+  id              String             @id @default(uuid()) @db.Uuid
+  groupId         String             @map("group_id") @db.Uuid
+  memberId        String             @map("member_id") @db.Uuid
+  amount          Decimal            @db.Decimal(19, 4)
+  currency        String             @default("ZAR") @db.VarChar(3)
+  periodStart     DateTime           @map("period_start") @db.Date
+  periodEnd       DateTime           @map("period_end") @db.Date
+  paymentMethod   PaymentMethod?     @map("payment_method")
+  status          ContributionStatus @default(PENDING)
+  popDocumentId   String?            @map("pop_document_id") @db.Uuid
+  notes           String?            @db.Text
+  rejectionReason String?            @map("rejection_reason") @db.Text
+  approvedById    String?            @map("approved_by") @db.Uuid
+  approvedAt      DateTime?          @map("approved_at") @db.Timestamptz
+  idempotencyKey  String?            @unique @map("idempotency_key") @db.VarChar(100)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime?          @map("deleted_at") @db.Timestamptz
+
+  group       Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  member      User         @relation(fields: [memberId], references: [id])
+  approvedBy  User?        @relation("ApprovedContributions", fields: [approvedById], references: [id])
+  popDocument Document?    @relation(fields: [popDocumentId], references: [id])
+  ledgerEntry LedgerEntry?
+
+  @@unique([groupId, memberId, periodStart], name: "unique_approved_contribution")
+  @@index([groupId])
+  @@index([memberId])
+  @@index([status])
+  @@index([periodStart, periodEnd])
+  @@map("contributions")
+}
+
+enum PaymentMethod {
+  EFT
+  CASH
+  CARD
+  MOBILE_MONEY
+  OTHER
+}
+
+enum ContributionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model LedgerEntry {
+  id            String          @id @default(uuid()) @db.Uuid
+  groupId       String          @map("group_id") @db.Uuid
+  entryType     LedgerEntryType @map("entry_type")
+  amount        Decimal         @db.Decimal(19, 4)
+  currency      String          @default("ZAR") @db.VarChar(3)
+  balanceAfter  Decimal         @map("balance_after") @db.Decimal(19, 4)
+  referenceType String?         @map("reference_type") @db.VarChar(50)
+  referenceId   String?         @map("reference_id") @db.Uuid
+  description   String?         @db.Text
+  metadata      Json?
+  createdById   String?         @map("created_by") @db.Uuid
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  // NO deletedAt - ledger is IMMUTABLE
+
+  group        Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  contribution Contribution?  @relation(fields: [referenceId], references: [id])
+  payout       SavingsPayout? @relation(fields: [referenceId], references: [id])
+
+  @@index([groupId])
+  @@index([entryType])
+  @@index([createdAt])
+  @@index([referenceType, referenceId])
+  @@map("ledger_entries")
+}
+
+enum LedgerEntryType {
+  CONTRIBUTION_CREDIT
+  CONTRIBUTION_ADJUSTMENT
+  PAYOUT_DEBIT
+  PAYOUT_ADJUSTMENT
+  FINE_CREDIT
+  INTEREST_CREDIT
+  FEE_DEBIT
+  OPENING_BALANCE
+  CORRECTION
+}
+
+// ============================================
+// AUDIT LOG
+// ============================================
+
+model AuditLog {
+  id           String       @id @default(uuid()) @db.Uuid
+  actorId      String?      @map("actor_id") @db.Uuid
+  actorType    ActorType    @map("actor_type")
+  action       String       @db.VarChar(100)
+  resourceType String       @map("resource_type") @db.VarChar(50)
+  resourceId   String?      @map("resource_id") @db.Uuid
+  groupId      String?      @map("group_id") @db.Uuid
+  beforeState  Json?        @map("before_state")
+  afterState   Json?        @map("after_state")
+  metadata     Json?
+  ipAddress    String?      @map("ip_address") @db.VarChar(45)
+  userAgent    String?      @map("user_agent") @db.Text
+  outcome      AuditOutcome
+  errorCode    String?      @map("error_code") @db.VarChar(50)
+  errorMessage String?      @map("error_message") @db.Text
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  // NO deletedAt - audit logs are IMMUTABLE
+
+  actor User?  @relation(fields: [actorId], references: [id])
+  group Group? @relation(fields: [groupId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([resourceType, resourceId])
+  @@index([groupId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  API_KEY
+  WEBHOOK
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+  PARTIAL
+}
+
+// ============================================
+// IDEMPOTENCY & NOTIFICATIONS
+// ============================================
+
+model IdempotencyKey {
+  key         String   @id @db.VarChar(100)
+  requestHash String   @map("request_hash") @db.VarChar(64)
+  response    Json
+  statusCode  Int      @map("status_code")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz
+
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+model Notification {
+  id        String             @id @default(uuid()) @db.Uuid
+  userId    String             @map("user_id") @db.Uuid
+  groupId   String?            @map("group_id") @db.Uuid
+  type      String             @db.VarChar(50)
+  title     String             @db.VarChar(200)
+  body      String             @db.Text
+  data      Json?
+  channel   NotificationChannel
+  status    NotificationStatus @default(PENDING)
+  sentAt    DateTime?          @map("sent_at") @db.Timestamptz
+  readAt    DateTime?          @map("read_at") @db.Timestamptz
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group? @relation(fields: [groupId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  READ
+}
