@@ -38,6 +38,13 @@ model User {
   savingsPayoutApprovals SavingsPayoutApproval[]
   auditLogs          AuditLog[]
   notifications      Notification[]
+  
+  // Grocery module relations
+  groceryPurchasesCreated     GroceryPurchase[]         @relation("GroceryPurchasesCreated")
+  groceryPurchasesApproved    GroceryPurchase[]         @relation("GroceryPurchasesApproved")
+  groceryDistributionsCreated GroceryDistribution[]     @relation("GroceryDistributionsCreated")
+  stockMovementsCreated       GroceryStockMovement[]    @relation("StockMovementsCreated")
+  distributionItemsConfirmed  GroceryDistributionItem[] @relation("DistributionItemsConfirmed")
 
   @@index([email])
   @@index([phone])
@@ -96,6 +103,12 @@ model Group {
   savingsPayouts SavingsPayout[]
   auditLogs      AuditLog[]
   notifications  Notification[]
+  
+  // Grocery module relations
+  groceryProducts      GroceryProduct[]
+  groceryPurchases     GroceryPurchase[]
+  groceryDistributions GroceryDistribution[]
+  groceryStockMovements GroceryStockMovement[]
 
   @@index([type])
   @@index([status])
@@ -138,6 +151,9 @@ model GroupMember {
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  // Grocery distribution items allocated to this member
+  groceryDistributionItems GroceryDistributionItem[]
 
   @@unique([userId, groupId])
   @@index([userId])
@@ -288,9 +304,10 @@ model Document {
   createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
   deletedAt        DateTime?    @map("deleted_at") @db.Timestamptz
 
-  uploader     User          @relation(fields: [uploaderId], references: [id])
-  group        Group?        @relation(fields: [groupId], references: [id])
-  contributions Contribution[]
+  uploader         User              @relation(fields: [uploaderId], references: [id])
+  group            Group?            @relation(fields: [groupId], references: [id])
+  contributions    Contribution[]
+  groceryPurchases GroceryPurchase[] @relation("GroceryPurchaseReceipts")
 
   @@index([uploaderId])
   @@index([groupId])
@@ -304,6 +321,7 @@ enum DocumentType {
   ID_DOCUMENT
   BANK_STATEMENT
   CONTRACT
+  GROCERY_RECEIPT
   OTHER
 }
 
@@ -375,9 +393,10 @@ model LedgerEntry {
   createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz
   // NO deletedAt - ledger is IMMUTABLE
 
-  group        Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  contribution Contribution?  @relation(fields: [referenceId], references: [id])
-  payout       SavingsPayout? @relation(fields: [referenceId], references: [id])
+  group           Group            @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  contribution    Contribution?    @relation(fields: [referenceId], references: [id])
+  payout          SavingsPayout?   @relation(fields: [referenceId], references: [id])
+  groceryPurchase GroceryPurchase? @relation("GroceryPurchaseLedger", fields: [referenceId], references: [id])
 
   @@index([groupId])
   @@index([entryType])
@@ -396,6 +415,8 @@ enum LedgerEntryType {
   FEE_DEBIT
   OPENING_BALANCE
   CORRECTION
+  GROCERY_PURCHASE_DEBIT
+  GROCERY_ADJUSTMENT
 }
 
 // ============================================
@@ -497,4 +518,218 @@ enum NotificationStatus {
   DELIVERED
   FAILED
   READ
+}
+
+// ============================================
+// GROCERY MODULE
+// ============================================
+
+model GroceryProduct {
+  id          String   @id @default(uuid()) @db.Uuid
+  groupId     String   @map("group_id") @db.Uuid
+  name        String   @db.VarChar(200)
+  unit        String   @db.VarChar(50)
+  category    GroceryCategory
+  defaultSize Decimal? @map("default_size") @db.Decimal(10, 3)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+
+  group              Group                    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  purchaseItems      GroceryPurchaseItem[]
+  stockMovements     GroceryStockMovement[]
+  distributionItems  GroceryDistributionItem[]
+
+  @@unique([groupId, name])
+  @@index([groupId])
+  @@index([category])
+  @@index([active])
+  @@map("grocery_products")
+}
+
+enum GroceryCategory {
+  STAPLES
+  MEAT
+  DAIRY
+  VEGETABLES
+  FRUITS
+  BEVERAGES
+  TOILETRIES
+  CLEANING
+  VOUCHERS
+  OTHER
+}
+
+model GroceryPurchase {
+  id                String                @id @default(uuid()) @db.Uuid
+  groupId           String                @map("group_id") @db.Uuid
+  createdById       String                @map("created_by_id") @db.Uuid
+  approvedById      String?               @map("approved_by_id") @db.Uuid
+  receiptDocumentId String?               @map("receipt_document_id") @db.Uuid
+  supplierName      String                @map("supplier_name") @db.VarChar(200)
+  purchaseDate      DateTime              @map("purchase_date") @db.Date
+  totalAmount       Decimal               @map("total_amount") @db.Decimal(19, 4)
+  currency          String                @default("ZAR") @db.VarChar(3)
+  status            GroceryPurchaseStatus @default(PENDING)
+  notes             String?               @db.Text
+  approvedAt        DateTime?             @map("approved_at") @db.Timestamptz
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt         DateTime?             @map("deleted_at") @db.Timestamptz
+
+  group           Group                 @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdBy       User                  @relation("GroceryPurchasesCreated", fields: [createdById], references: [id])
+  approvedBy      User?                 @relation("GroceryPurchasesApproved", fields: [approvedById], references: [id])
+  receiptDocument Document?             @relation("GroceryPurchaseReceipts", fields: [receiptDocumentId], references: [id])
+  items           GroceryPurchaseItem[]
+  stockMovements  GroceryStockMovement[]
+  ledgerEntry     LedgerEntry?          @relation("GroceryPurchaseLedger")
+
+  @@index([groupId])
+  @@index([status])
+  @@index([purchaseDate])
+  @@index([createdById])
+  @@map("grocery_purchases")
+}
+
+enum GroceryPurchaseStatus {
+  PENDING
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model GroceryPurchaseItem {
+  id         String  @id @default(uuid()) @db.Uuid
+  purchaseId String  @map("purchase_id") @db.Uuid
+  productId  String  @map("product_id") @db.Uuid
+  quantity   Decimal @db.Decimal(10, 3)
+  unitPrice  Decimal @map("unit_price") @db.Decimal(19, 4)
+  lineTotal  Decimal @map("line_total") @db.Decimal(19, 4)
+
+  purchase GroceryPurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product  GroceryProduct  @relation(fields: [productId], references: [id])
+
+  @@index([purchaseId])
+  @@index([productId])
+  @@map("grocery_purchase_items")
+}
+
+model GroceryStockMovement {
+  id            String               @id @default(uuid()) @db.Uuid
+  groupId       String               @map("group_id") @db.Uuid
+  productId     String               @map("product_id") @db.Uuid
+  movementType  StockMovementType    @map("movement_type")
+  quantity      Decimal              @db.Decimal(10, 3)
+  referenceType String?              @map("reference_type") @db.VarChar(50)
+  referenceId   String?              @map("reference_id") @db.Uuid
+  reason        String?              @db.Text
+  createdById   String?              @map("created_by_id") @db.Uuid
+  createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  // NO deletedAt - stock movements are IMMUTABLE (like ledger)
+
+  group            Group                    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  product          GroceryProduct           @relation(fields: [productId], references: [id])
+  createdBy        User?                    @relation("StockMovementsCreated", fields: [createdById], references: [id])
+  purchase         GroceryPurchase?         @relation(fields: [referenceId], references: [id])
+  distributionItem GroceryDistributionItem? @relation(fields: [referenceId], references: [id])
+
+  @@index([groupId, productId])
+  @@index([movementType])
+  @@index([referenceType, referenceId])
+  @@index([createdAt])
+  @@map("grocery_stock_movements")
+}
+
+enum StockMovementType {
+  IN
+  OUT
+  ADJUSTMENT
+}
+
+model GroceryDistribution {
+  id             String                    @id @default(uuid()) @db.Uuid
+  groupId        String                    @map("group_id") @db.Uuid
+  createdById    String                    @map("created_by_id") @db.Uuid
+  status         GroceryDistributionStatus @default(DRAFT)
+  allocationRule AllocationRule            @default(EQUAL_SHARE) @map("allocation_rule")
+  distributionDate DateTime                @map("distribution_date") @db.Date
+  notes          String?                   @db.Text
+  createdAt      DateTime                  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime                  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt      DateTime?                 @map("deleted_at") @db.Timestamptz
+
+  group     Group                     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdBy User                      @relation("GroceryDistributionsCreated", fields: [createdById], references: [id])
+  items     GroceryDistributionItem[]
+
+  @@index([groupId])
+  @@index([status])
+  @@index([distributionDate])
+  @@map("grocery_distributions")
+}
+
+enum GroceryDistributionStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum AllocationRule {
+  EQUAL_SHARE
+  PROPORTIONAL
+  CUSTOM
+}
+
+model GroceryDistributionItem {
+  id                 String                       @id @default(uuid()) @db.Uuid
+  distributionId     String                       @map("distribution_id") @db.Uuid
+  memberId           String                       @map("member_id") @db.Uuid
+  productId          String                       @map("product_id") @db.Uuid
+  quantityAllocated  Decimal                      @map("quantity_allocated") @db.Decimal(10, 3)
+  quantityOverride   Decimal?                     @map("quantity_override") @db.Decimal(10, 3)
+  overrideReason     String?                      @map("override_reason") @db.Text
+  status             DistributionItemStatus       @default(PENDING)
+  confirmedById      String?                      @map("confirmed_by_id") @db.Uuid
+  confirmationNote   String?                      @map("confirmation_note") @db.Text
+  idempotencyKey     String?                      @unique @map("idempotency_key") @db.VarChar(100)
+  confirmedAt        DateTime?                    @map("confirmed_at") @db.Timestamptz
+  createdAt          DateTime                     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime                     @updatedAt @map("updated_at") @db.Timestamptz
+
+  distribution   GroceryDistribution    @relation(fields: [distributionId], references: [id], onDelete: Cascade)
+  member         GroupMember            @relation(fields: [memberId], references: [id])
+  product        GroceryProduct         @relation(fields: [productId], references: [id])
+  confirmedBy    User?                  @relation("DistributionItemsConfirmed", fields: [confirmedById], references: [id])
+  stockMovements GroceryStockMovement[]
+
+  @@unique([distributionId, memberId, productId])
+  @@index([distributionId])
+  @@index([memberId])
+  @@index([productId])
+  @@index([status])
+  @@map("grocery_distribution_items")
+}
+
+enum DistributionItemStatus {
+  PENDING
+  PACKED
+  COLLECTED
+  CONFIRMED
+  CANCELLED
+}
+
+model GroceryIdempotencyKey {
+  key         String   @id @db.VarChar(100)
+  actionType  String   @map("action_type") @db.VarChar(50)
+  referenceId String   @map("reference_id") @db.Uuid
+  response    Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz
+
+  @@index([expiresAt])
+  @@map("grocery_idempotency_keys")
 }

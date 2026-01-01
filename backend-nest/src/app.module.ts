@@ -14,6 +14,7 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { HealthModule } from './modules/health/health.module';
+import { GroceryModule } from './modules/grocery/grocery.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { HealthModule } from './modules/health/health.module';
     DocumentsModule,
     AuditModule,
     NotificationsModule,
+    GroceryModule,
   ],
   providers: [
     {

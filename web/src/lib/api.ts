@@ -131,3 +131,76 @@ export const documentsApi = {
   getDownloadUrl: (id: string) => api.get(`/documents/${id}/download`),
   delete: (id: string) => api.delete(`/documents/${id}`),
 };
+
+// Grocery API
+export const groceryApi = {
+  // Summary
+  getSummary: (groupId: string) => 
+    api.get(`/groups/${groupId}/grocery/summary`),
+
+  // Products
+  getProducts: (groupId: string, params?: { category?: string; active?: boolean; search?: string }) =>
+    api.get(`/groups/${groupId}/grocery/products`, { params }),
+  getProduct: (groupId: string, productId: string) =>
+    api.get(`/groups/${groupId}/grocery/products/${productId}`),
+  createProduct: (groupId: string, data: { name: string; unit: string; category: string; defaultSize?: number }) =>
+    api.post(`/groups/${groupId}/grocery/products`, data),
+  updateProduct: (groupId: string, productId: string, data: Partial<{ name: string; unit: string; category: string; defaultSize: number; active: boolean }>) =>
+    api.patch(`/groups/${groupId}/grocery/products/${productId}`, data),
+  deleteProduct: (groupId: string, productId: string) =>
+    api.delete(`/groups/${groupId}/grocery/products/${productId}`),
+  getCategories: () => api.get('/groups/any/grocery/products/categories'),
+
+  // Purchases
+  getPurchases: (groupId: string, params?: { startDate?: string; endDate?: string; status?: string }) =>
+    api.get(`/groups/${groupId}/grocery/purchases`, { params }),
+  getPurchase: (groupId: string, purchaseId: string) =>
+    api.get(`/groups/${groupId}/grocery/purchases/${purchaseId}`),
+  createPurchase: (groupId: string, data: {
+    supplierName: string;
+    purchaseDate: string;
+    receiptDocumentId?: string;
+    notes?: string;
+    items: Array<{ productId: string; quantity: number; unitPrice: number }>;
+  }) => api.post(`/groups/${groupId}/grocery/purchases`, data),
+  approvePurchase: (groupId: string, purchaseId: string, notes?: string) =>
+    api.post(`/groups/${groupId}/grocery/purchases/${purchaseId}/approve`, { notes }),
+  rejectPurchase: (groupId: string, purchaseId: string, reason: string) =>
+    api.post(`/groups/${groupId}/grocery/purchases/${purchaseId}/reject`, { reason }),
+
+  // Stock
+  getStock: (groupId: string, params?: { category?: string; search?: string }) =>
+    api.get(`/groups/${groupId}/grocery/stock`, { params }),
+  getStockMovements: (groupId: string, params?: { productId?: string; movementType?: string; startDate?: string; endDate?: string }) =>
+    api.get(`/groups/${groupId}/grocery/stock/movements`, { params }),
+  createAdjustment: (groupId: string, data: { productId: string; quantity: number; reason: string }) =>
+    api.post(`/groups/${groupId}/grocery/stock/adjustments`, data),
+
+  // Distributions
+  getDistributions: (groupId: string, params?: { status?: string; startDate?: string; endDate?: string }) =>
+    api.get(`/groups/${groupId}/grocery/distributions`, { params }),
+  getDistribution: (groupId: string, distributionId: string) =>
+    api.get(`/groups/${groupId}/grocery/distributions/${distributionId}`),
+  createDistribution: (groupId: string, data: {
+    distributionDate: string;
+    allocationRule?: string;
+    notes?: string;
+    products: Array<{ productId: string; totalQuantity: number }>;
+    overrides?: Array<{ memberId: string; productId: string; quantity: number; reason?: string }>;
+  }) => api.post(`/groups/${groupId}/grocery/distributions`, data),
+  updateDistributionStatus: (groupId: string, distributionId: string, status: string) =>
+    api.patch(`/groups/${groupId}/grocery/distributions/${distributionId}/status`, { status }),
+
+  // Distribution Items
+  updateItemStatus: (itemId: string, status: string, note?: string) =>
+    api.patch(`/grocery/distribution-items/${itemId}/status`, { status, note }),
+  confirmItem: (itemId: string, idempotencyKey?: string, note?: string) =>
+    api.post(`/grocery/distribution-items/${itemId}/confirm`, { idempotencyKey, note }),
+
+  // Member endpoints
+  getMyGroceryGroups: () => api.get('/me/grocery/groups'),
+  getMyAllocations: (groupId: string) => api.get(`/me/grocery/groups/${groupId}/allocations`),
+  getMyHistory: (groupId: string) => api.get(`/me/grocery/groups/${groupId}/history`),
+  getMemberSummary: (groupId: string, memberId: string) =>
+    api.get(`/groups/${groupId}/grocery/member/${memberId}/summary`),
+};

@@ -1,6 +1,6 @@
-# StockvelOS - Savings Module
+# StockvelOS - Savings & Grocery Modules
 
-A complete implementation of the **Savings Stokvel Module** for StockvelOS, the South African stokvel management platform. This module provides end-to-end functionality for managing rotating savings groups (stokvels), including contributions, payouts, and financial ledger tracking.
+A complete implementation of the **Savings** and **Grocery Stokvel Modules** for StockvelOS, the South African stokvel management platform. This platform provides end-to-end functionality for managing rotating savings groups (stokvels), bulk grocery purchasing, and fair distribution of goods to members.
 
 ## 🏗️ Architecture Overview
 
@@ -30,6 +30,8 @@ A complete implementation of the **Savings Stokvel Module** for StockvelOS, the 
 │ - Users/Groups  │   │ - Session cache     │   │ - POP documents      │
 │ - Contributions │   │ - Rate limiting     │   │ - Signed URLs        │
 │ - Ledger        │   │ - BullMQ jobs       │   │                      │
+│ - Grocery Stock │   │                     │   │                      │
+│ - Distributions │   │                     │   │                      │
 │ - Audit logs    │   │                     │   │                      │
 └─────────────────┘   └─────────────────────┘   └──────────────────────┘
 ```
@@ -38,7 +40,7 @@ A complete implementation of the **Savings Stokvel Module** for StockvelOS, the 
 
 Stockvel OS supports four distinct stokvel types:
 - **Savings Stokvel** - Monthly contributions with annual/scheduled payouts (✅ Implemented)
-- **Grocery Stokvel** - Bulk purchasing and distribution of groceries
+- **Grocery Stokvel** - Bulk purchasing and distribution of groceries (✅ Implemented)
 - **Burial Society** - Emergency funeral expense coverage
 - **ROSCA** (Rotating Savings) - Members take turns receiving the full pot
 | Database | PostgreSQL 15+ |
@@ -65,6 +67,7 @@ stockvelOS/
 │   │   │   ├── contributions/    # Contribution CRUD & approval
 │   │   │   ├── payouts/          # Payout scheduling & processing
 │   │   │   ├── ledger/           # Double-entry ledger
+│   │   │   ├── grocery/          # Grocery products, stock, distributions
 │   │   │   ├── documents/        # S3 document storage
 │   │   │   ├── notifications/    # Email, SMS, push, in-app
 │   │   │   └── health/           # Health checks
@@ -77,7 +80,9 @@ stockvelOS/
 │   ├── src/
 │   │   ├── components/ui/        # Reusable UI components
 │   │   ├── layouts/              # Auth & Dashboard layouts
-│   │   ├── pages/                # Route pages
+│   │   ├── pages/
+│   │   │   ├── grocery/          # Grocery stokvel pages
+│   │   │   └── ...               # Other pages
 │   │   ├── stores/               # Zustand state management
 │   │   ├── lib/                  # API client & utilities
 │   │   └── hooks/                # Custom hooks
@@ -93,11 +98,14 @@ stockvelOS/
 │   │   │   ├── models/           # Freezed data classes
 │   │   │   ├── repositories/     # Offline-first data access
 │   │   │   └── providers/        # Riverpod state management
-│   │   └── features/             # Feature modules
+│   │   └── features/
+│   │       ├── grocery/          # Grocery stokvel feature
+│   │       └── ...               # Other features
 │   └── pubspec.yaml
 │
 └── docs/                         # Architecture documentation
-    └── architecture.md
+    ├── architecture.md
+    └── grocery-module-architecture.md
 ```
 
 ## Non-Negotiables
@@ -261,16 +269,103 @@ SMTP_FROM="noreply@stockvelos.co.za"
 | `/api/ledger/group/:groupId` | GET | Transaction history |
 | `/api/ledger/member/:membershipId` | GET | Member transactions |
 
+### Grocery Products
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/groups/:groupId/grocery/products` | GET | List products |
+| `/api/groups/:groupId/grocery/products` | POST | Create product (Treasurer) |
+| `/api/groups/:groupId/grocery/products/:id` | PATCH | Update product |
+| `/api/groups/:groupId/grocery/products/:id` | DELETE | Delete product |
+
+### Grocery Purchases
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/groups/:groupId/grocery/purchases` | GET | List purchases |
+| `/api/groups/:groupId/grocery/purchases` | POST | Record purchase (Treasurer) |
+| `/api/groups/:groupId/grocery/purchases/:id/approve` | POST | Approve purchase (Chairperson) |
+| `/api/groups/:groupId/grocery/purchases/:id/reject` | POST | Reject purchase (Chairperson) |
+
+### Grocery Stock
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/groups/:groupId/grocery/stock` | GET | Current stock levels |
+| `/api/groups/:groupId/grocery/stock/movements` | GET | Stock movement history |
+| `/api/groups/:groupId/grocery/stock/adjustments` | POST | Create stock adjustment |
+
+### Grocery Distributions
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/groups/:groupId/grocery/distributions` | GET | List distributions |
+| `/api/groups/:groupId/grocery/distributions` | POST | Create distribution |
+| `/api/grocery/distribution-items/:id/status` | PATCH | Update item status |
+| `/api/grocery/distribution-items/:id/confirm` | POST | Confirm item collection (member) |
+
+### Member Grocery Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/me/grocery/groups` | GET | My grocery groups |
+| `/api/me/grocery/allocations` | GET | My pending allocations |
+| `/api/me/grocery/allocations/:groupId` | GET | Allocations for a group |
+| `/api/me/grocery/history` | GET | My collection history |
+
+## 🛒 Grocery Module Features
+
+### Product Catalog
+- Create and manage product catalog per group
+- Categorize products (STAPLES, PROTEINS, DAIRY, etc.)
+- Set preferred units (KG, LITERS, UNITS, PACKETS)
+- Track product history and usage
+
+### Stock Management
+- **Movement-based tracking**: Stock levels calculated from sum of movements
+- **Movement types**: IN (purchase), OUT (distribution), ADJUSTMENT
+- **Audit trail**: Full history of all stock changes
+- **Real-time availability**: Check stock before distributions
+
+### Purchase Workflow
+```
+Treasurer                    Chairperson                  System
+    │                            │                          │
+    │──Record Purchase─────────▶│                          │
+    │   (items, total amount,   │                          │
+    │    supplier, receipt)     │                          │
+    │                           │                          │
+    │                           │──Review Purchase────────▶│
+    │                           │                          │
+    │                           │◀─Approve/Reject─────────│
+    │                           │                          │
+    │                           │                          │──Create Stock Movements (IN)
+    │                           │                          │──Update Pool Balance
+    │                           │                          │──Log Audit Trail
+```
+
+### Fair Distribution Algorithm
+1. Calculate equal shares: `totalQuantity / activeMembers`
+2. Handle remainders with round-robin allocation
+3. Track historical allocations for fairness scoring
+4. Generate fairness reports per member and product
+
+### Offline-First Mobile Support
+- Queue confirmations locally when offline
+- Auto-sync when connectivity returns
+- Idempotency keys prevent duplicate confirmations
+- 7-day TTL on idempotency records
+
 ## 🔐 Role-Based Access Control (RBAC)
 
 ### Group Roles
 
-| Role | Permissions |
-|------|-------------|
-| **CHAIRPERSON** | Full access, manage members, approve payouts |
-| **TREASURER** | Approve/reject contributions, process payouts |
-| **SECRETARY** | View all data, manage documents |
-| **MEMBER** | Submit contributions, view own data |
+| Role | Savings Permissions | Grocery Permissions |
+|------|---------------------|---------------------|
+| **CHAIRPERSON** | Full access, manage members, approve payouts | Approve purchases, manage distributions |
+| **TREASURER** | Approve/reject contributions, process payouts | Record purchases, manage stock, create distributions |
+| **SECRETARY** | View all data, manage documents | View all data, manage documents |
+| **MEMBER** | Submit contributions, view own data | View allocations, confirm collection |
 
 ## 📱 Offline Support (Mobile)
 
@@ -290,6 +385,24 @@ final contribution = await repository.submitContribution(
   paymentMethod: 'BANK_TRANSFER',
   // idempotencyKey generated automatically
 );
+
+// Confirm grocery item collection works offline
+final result = await groceryRepository.confirmItem('item-id');
+// result.fromCache == true means queued for sync
+```
+
+### Grocery Sync Service
+```dart
+// Auto-sync pending confirmations when online
+class GrocerySyncService {
+  void setupConnectivityListener() {
+    connectivity.onConnectivityChanged.listen((result) async {
+      if (result != ConnectivityResult.none) {
+        await repository.syncPendingConfirmations();
+      }
+    });
+  }
+}
 ```
 
 ## 🧪 Testing
@@ -315,8 +428,11 @@ pnpm test:cov
 # Start all services
 docker-compose up -d
 
+# Start with dev tools (PgAdmin)
+docker-compose --profile dev up -d
+
 # View logs
-docker-compose logs -f api
+docker-compose logs -f backend
 
 # Stop all services
 docker-compose down
@@ -324,19 +440,47 @@ docker-compose down
 # Reset database
 docker-compose down -v
 docker-compose up -d
+
+# Build and run production
+docker-compose -f docker-compose.yml up -d --build
 ```
+
+### Services
+
+| Service | Port | Description |
+|---------|------|-------------|
+| `postgres` | 5432 | PostgreSQL database |
+| `redis` | 6379 | Redis cache |
+| `minio` | 9000, 9001 | S3-compatible storage |
+| `backend` | 3000 | NestJS API |
+| `web` | 80 | React frontend |
+| `pgadmin` | 5050 | Database admin (dev profile) |
 
 ## 📊 Database Schema
 
 Key entities:
 
+### Core Entities
 - **User**: Authentication & profile
 - **Group**: Stokvel organization
 - **Membership**: User ↔ Group with role
+
+### Savings Module
 - **SavingsRule**: Contribution/payout configuration
 - **Contribution**: Member payments with status
 - **Payout**: Scheduled disbursements
 - **LedgerEntry**: Financial audit trail
+
+### Grocery Module
+- **GroceryProduct**: Product catalog per group
+- **GroceryStockMovement**: Stock IN/OUT/ADJUSTMENT history
+- **GroceryPurchase**: Bulk purchase records
+- **GroceryPurchaseItem**: Items within a purchase
+- **GroceryDistribution**: Distribution events
+- **GroceryDistributionItem**: Member allocations per distribution
+- **GroceryIdempotencyKey**: Offline confirmation deduplication
+
+### Common
 - **Notification**: Multi-channel alerts
 - **AuditLog**: Action history
 
@@ -362,6 +506,29 @@ Member                    Treasurer                   System
   │                         │                          │──Create Ledger Entry
   │                         │                          │──Update Pool Balance
   │                         │                          │──Check Payout Trigger
+```
+
+## 🛒 Distribution Flow
+
+```
+Treasurer                  System                      Member
+    │                          │                          │
+    │──Create Distribution────▶│                          │
+    │   (items, quantities)    │                          │
+    │                          │                          │
+    │                          │──Calculate Equal Shares──│
+    │                          │──Create Member Items─────│
+    │                          │──Notify Members──────────│
+    │                          │                          │
+    │                          │                          │◀─View Allocations
+    │                          │                          │   (web/mobile)
+    │                          │                          │
+    │                          │◀──────Confirm Collection─│
+    │                          │    (idempotency key)     │
+    │                          │                          │
+    │                          │──Update Item Status──────│
+    │                          │──Create Stock Movement───│
+    │                          │    (OUT)                 │
 ```
 
 ## 🛡️ Security Features

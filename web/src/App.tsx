@@ -20,6 +20,18 @@ import PayoutsPage from './pages/payouts/PayoutsPage';
 import NotificationsPage from './pages/notifications/NotificationsPage';
 import ProfilePage from './pages/profile/ProfilePage';
 
+// Grocery Pages
+import {
+  GroceryDashboardPage,
+  ProductCatalogPage,
+  RecordPurchasePage,
+  PurchaseHistoryPage,
+  CurrentStockPage,
+  CreateDistributionPage,
+  DistributionDetailPage,
+  FairnessReportPage,
+} from './pages/grocery';
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
@@ -62,6 +74,17 @@ function App() {
         <Route path="/payouts" element={<PayoutsPage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/profile" element={<ProfilePage />} />
+
+        {/* Grocery Routes */}
+        <Route path="/groups/:groupId/grocery" element={<GroceryDashboardPage />} />
+        <Route path="/groups/:groupId/grocery/products" element={<ProductCatalogPage />} />
+        <Route path="/groups/:groupId/grocery/purchases" element={<PurchaseHistoryPage />} />
+        <Route path="/groups/:groupId/grocery/purchases/new" element={<RecordPurchasePage />} />
+        <Route path="/groups/:groupId/grocery/stock" element={<CurrentStockPage />} />
+        <Route path="/groups/:groupId/grocery/distributions" element={<GroceryDashboardPage />} />
+        <Route path="/groups/:groupId/grocery/distributions/new" element={<CreateDistributionPage />} />
+        <Route path="/groups/:groupId/grocery/distributions/:distributionId" element={<DistributionDetailPage />} />
+        <Route path="/groups/:groupId/grocery/fairness" element={<FairnessReportPage />} />
       </Route>
 
       {/* Default redirect */}
